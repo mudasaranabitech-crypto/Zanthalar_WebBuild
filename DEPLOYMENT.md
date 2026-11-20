@@ -137,3 +137,16 @@ sudo mv -Tf /var/www/zanthalar-web/current.next /var/www/zanthalar-web/current
 - TLS/HTTPS is pending. The current HTTP AWS testing link works independently of the GitHub Pages HTTPS address.
 - GitHub Pages still needs an HTTPS API and appropriate cross-origin permissions before that separate website can log in.
 - On 20 November, HTTP assets and API/WebSocket authentication responses were verified. Automated browser loading was blocked locally by `ERR_BLOCKED_BY_CLIENT`. Authenticated browser gameplay still needs verification.
+
+## Issues encountered and fixes
+
+- **HTTP connection timed out**. Port 80 initially needed an inbound security-group rule. Later intermittent timeouts recovered while the server remained responsive locally. Their exact network cause is unconfirmed.
+- **HTTPS connection timed out**. Port 443/TLS is unconfigured. The current testing URL is explicitly `http://51.21.188.48/zanthalar/`.
+- **Wasm fetching failed**. A regex Wasm location took priority over the game subfolder rewrite, returning 404. The Nginx prefix must use `location ^~ /zanthalar/` so rewriting happens before the Wasm handler. Verify the full subfolder asset URL, not only `/Build/`.
+- **Browser API access**. Ports 80 and 5000 are different origins. The WebGL client now uses the page origin when its hostname matches the configured backend hostname. Nginx forwards `/api/` and `/ws/`.
+- **Long first load**. The deployed data file is approximately 115.4 MiB compressed and Wasm is 11.4 MiB compressed. A measured Wasm download took 52.8 seconds. A slow connection can therefore require around ten minutes for the first full load. Page HTTP 200 alone does not establish playable loading.
+- **Compression and loading progress**. The active release has precompressed `.gz` sidecars and Nginx `gzip_static on`. Responses supply compressed Content-Length, correct Content-Encoding and Wasm MIME type. Future releases without sidecars still use dynamic gzip. Check disk space before generating sidecars.
+- **Low disk space**. Archived journal cleanup freed 252.9 MiB. Retaining old releases and upload packages consumes additional space. Preserve required rollback backups when planning cleanup.
+- **Repository push rejected**. The active credential account lacked repository permission. AWS was updated directly over SSH. Local commits still need an authenticated push with the correct account.
+
+The full public Wasm download was checked against the local build SHA256 after the route fix. Login and a complete gameplay session remain pending browser verification.
