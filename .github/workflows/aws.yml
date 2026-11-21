@@ -1,0 +1,88 @@
+name: Deploy WebGL to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-webgl
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EC2_HOST: 51.21.188.48
+      EC2_USER: ec2-user
+      HOST_FINGERPRINT: SHA256:jZyy/9LRHwAoHR0puJOw2ub4eLnCFUI7n22fRFpy+Hc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Prepare complete browser release
+        run: python3 .github/scripts/prepare_aws.py "$RUNNER_TEMP/site"
+
+      - name: Authenticate and deploy
+        env:
+          DEPLOY_KEY: ${{ secrets.EC2_SSH_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" || { echo 'Add the EC2_SSH_KEY repository secret first.'; exit 1; }
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/key"
+          ssh-keyscan -T 10 -t ed25519 "$EC2_HOST" > "$RUNNER_TEMP/known_hosts"
+          actual=$(ssh-keygen -lf "$RUNNER_TEMP/known_hosts" -E sha256 | awk '{print $2}')
+          test "$actual" = "$HOST_FINGERPRINT"
+          ssh_args=(-i "$RUNNER_TEMP/key" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts")
+          host="$EC2_USER@$EC2_HOST"
+          release="/var/www/zanthalar-web/$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          required=$(du -sb "$RUNNER_TEMP/site" | awk '{print $1}')
+          available=$(ssh "${ssh_args[@]}" "$host" "df -B1 --output=avail /var/www/zanthalar-web | tail -1")
+          test "$available" -gt "$((required + 33554432))" || { echo 'Insufficient EC2 disk space for a complete release.'; exit 1; }
+          ssh "${ssh_args[@]}" "$host" "test ! -e '$release' && sudo install -d -m 755 -o ec2-user -g ec2-user '$release'"
+          tar -czf - -C "$RUNNER_TEMP/site" . | ssh "${ssh_args[@]}" "$host" "tar -xzf - -C '$release'"
+          ssh "${ssh_args[@]}" "$host" bash -s -- "$release" <<'REMOTE'
+          set -euo pipefail
+          release=$1
+          root=/var/www/zanthalar-web
+          cd "$release"
+          sha256sum -c release.sha256
+          sudo nginx -t
+          previous=$(readlink -f "$root/current")
+          if [ "$previous" != "$release" ]; then
+            sudo ln -s "$release" "$root/current.next"
+            sudo mv -Tf "$root/current.next" "$root/current"
+          fi
+          if ! curl -fsS --max-time 10 -H 'Host: 51.21.188.48' http://127.0.0.1/zanthalar/ >/dev/null; then
+            sudo ln -s "$previous" "$root/current.next"
+            sudo mv -Tf "$root/current.next" "$root/current"
+            exit 1
+          fi
+          python3 - "$release" "$previous" <<'PY'
+          from pathlib import Path
+          import re
+          import shutil
+          import sys
+          root = Path('/var/www/zanthalar-web').resolve()
+          retained = {Path(path).resolve() for path in sys.argv[1:]}
+          for folder in root.iterdir():
+              if folder.is_symlink() or not re.fullmatch(r'[0-9a-f]{7,40}(?:-[0-9]+-[0-9]+)?', folder.name):
+                  continue
+              if folder.resolve() in retained or folder.resolve().parent != root:
+                  continue
+              if (folder / 'index.html').is_file() and (folder / 'Build').is_dir():
+                  shutil.rmtree(folder)
+          PY
+          REMOTE
+          curl -fsS --retry 3 --max-time 15 "http://$EC2_HOST/zanthalar/" >/dev/null
+
+      - name: Remove temporary key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/key"

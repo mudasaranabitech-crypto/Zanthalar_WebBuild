@@ -2,7 +2,19 @@
 
 The build repository is `D:\Zanthalar_WebBuild\Zanthalar_WebBuild`.
 The AWS testing URL is http://51.21.188.48/.
-The repository currently deploys to GitHub Pages automatically on push. AWS deployment is manual.
+The repository includes GitHub Actions workflows for GitHub Pages and AWS.
+
+## Automatic AWS deployment after push
+
+One-time setup in GitHub: open this repository's Settings, Secrets and variables, Actions. Add repository secret `EC2_SSH_KEY` with the complete contents of the protected EC2 private-key file. Never commit the key or paste it into task comments.
+
+After copying a complete new Unity build into this repository, commit and push `main`. Open Actions and select **Deploy WebGL to AWS** to monitor the deployment. It can also be run manually from the Actions page. The workflow requires successful repository write access and the SSH secret before its first deployment.
+
+The workflow selects only the build files referenced by `index.html`, prepares compression, verifies checksums on EC2, and switches the same live URL to the new release. A failed upload leaves the active release in place. Activation failure restores the previous release. Older managed static releases are removed after successful activation while the current and previous releases are retained. The API/database have independent deployments.
+
+Live URL: http://51.21.188.48/zanthalar/
+
+Automatic deployment setup is ready in code. Verify a successful Actions run before relying on unattended deployment. The manual fallback follows below.
 
 ## 1. Make the Unity build
 
@@ -24,7 +36,7 @@ Copy the full commit SHA from GitHub, or run this locally in PowerShell.
 git -C "D:\Zanthalar_WebBuild\Zanthalar_WebBuild" rev-parse HEAD
 ```
 
-Pushing updates GitHub Pages. Continue with the next step to update AWS.
+After the SSH secret is configured, pushing updates both GitHub Pages and AWS through their workflows. For manual AWS deployment, continue below.
 
 ## 3. Connect to AWS
 
