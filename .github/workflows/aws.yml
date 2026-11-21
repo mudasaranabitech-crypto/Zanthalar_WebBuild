@@ -65,7 +65,7 @@ jobs:
             sudo mv -Tf "$root/current.next" "$root/current"
             exit 1
           fi
-          python3 - "$release" "$previous" <<'PY'
+          sudo python3 - "$release" "$previous" <<'PY'
           from pathlib import Path
           import re
           import shutil
